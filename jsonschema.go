@@ -43,7 +43,7 @@ func (d *Document) String() string {
 }
 
 type property struct {
-	Type                 string               `json:"type,omitempty"`
+	Type                 interface{}          `json:"type,omitempty"`
 	Format               string               `json:"format,omitempty"`
 	Items                *item                `json:"items,omitempty"`
 	Properties           map[string]*property `json:"properties,omitempty"`
@@ -52,7 +52,7 @@ type property struct {
 }
 
 type item struct {
-	Type string `json:"type,omitempty"`
+	property
 }
 
 func (p *property) read(t reflect.Type, opts tagOptions) {
@@ -66,7 +66,7 @@ func (p *property) read(t reflect.Type, opts tagOptions) {
 
 	switch kind {
 	case reflect.Slice:
-		p.readFromSlice(t)
+		p.readFromSlice(t, opts)
 	case reflect.Map:
 		p.readFromMap(t)
 	case reflect.Struct:
@@ -74,14 +74,17 @@ func (p *property) read(t reflect.Type, opts tagOptions) {
 	case reflect.Ptr:
 		p.read(t.Elem(), opts)
 	}
+
+	p.Type = getJSPtrType(jsType, t, opts)
 }
 
-func (p *property) readFromSlice(t reflect.Type) {
+func (p *property) readFromSlice(t reflect.Type, opts tagOptions) {
 	jsType, _, kind := getTypeFromMapping(t.Elem())
 	if kind == reflect.Uint8 {
-		p.Type = "string"
+		p.Type = getJSPtrType(jsType, t, opts)
 	} else if jsType != "" {
-		p.Items = &item{Type: jsType}
+		p.Items = &item{property{Type: getJSPtrType(jsType, t, opts)}}
+		p.Items.read(t.Elem(), opts)
 	}
 }
 
@@ -141,6 +144,7 @@ var kindMapping = map[reflect.Kind]string{
 	reflect.Uint64:  "integer",
 	reflect.Float32: "number",
 	reflect.Float64: "number",
+	reflect.Ptr:     "object",
 	reflect.String:  "string",
 	reflect.Slice:   "array",
 	reflect.Struct:  "object",
@@ -186,4 +190,28 @@ func (o tagOptions) Contains(optionName string) bool {
 		s = next
 	}
 	return false
+}
+
+func getJSPtrType(jsType string, t reflect.Type, opts tagOptions) interface{} {
+	if !isPointerType(t) {
+		return jsType
+	}
+
+	var allTypes interface{}
+	if !opts.Contains("omitempty") {
+		allTypes = []string{jsType, "null"}
+	} else {
+		allTypes = jsType
+	}
+	return allTypes
+}
+
+func isPointerType(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Ptr:
+		// TODO: does Chan qualify?
+		return true
+	default:
+		return false
+	}
 }
